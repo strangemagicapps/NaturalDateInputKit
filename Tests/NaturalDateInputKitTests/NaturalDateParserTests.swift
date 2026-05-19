@@ -48,21 +48,21 @@ struct NaturalDateParserTests {
         #expect(parser.parse(input, relativeTo: Self.reference) == Self.day(2026, 5, 13))
     }
 
-    // MARK: - Weekday names
+    // MARK: - Weekday names (default: prefersFuture == false)
 
-    @Test func `same weekday returns next week`() {
-        // Wednesday parsed on Wednesday → upcoming Wednesday (7 days later)
-        #expect(parser.parse("Wednesday", relativeTo: Self.reference) == Self.day(2026, 5, 20))
+    @Test func `same weekday returns today by default`() {
+        // Wednesday parsed on Wednesday → today
+        #expect(parser.parse("Wednesday", relativeTo: Self.reference) == Self.day(2026, 5, 13))
     }
 
-    @Test func `upcoming weekday returns next occurrence`() {
+    @Test func `upcoming weekday returns this week's occurrence`() {
         // Friday after Wed 5/13 → 5/15
         #expect(parser.parse("Friday", relativeTo: Self.reference) == Self.day(2026, 5, 15))
     }
 
-    @Test func `weekday before today wraps forward`() {
-        // Monday after Wed 5/13 → 5/18
-        #expect(parser.parse("Monday", relativeTo: Self.reference) == Self.day(2026, 5, 18))
+    @Test func `past weekday returns this week's occurrence by default`() {
+        // Monday earlier in the same week as Wed 5/13 → 5/11
+        #expect(parser.parse("Monday", relativeTo: Self.reference) == Self.day(2026, 5, 11))
     }
 
     @Test func `next-prefixed weekday`() {
@@ -77,6 +77,26 @@ struct NaturalDateParserTests {
     @Test func `short weekday name`() {
         // "Fri" should resolve via short weekday symbols
         #expect(parser.parse("Fri", relativeTo: Self.reference) == Self.day(2026, 5, 15))
+    }
+
+    // MARK: - Weekday names with prefersFuture: true
+
+    @Test func `same weekday wraps to next week when prefersFuture is true`() {
+        #expect(parser.parse("Wednesday", relativeTo: Self.reference, prefersFuture: true) == Self.day(2026, 5, 20))
+    }
+
+    @Test func `past weekday wraps forward when prefersFuture is true`() {
+        #expect(parser.parse("Monday", relativeTo: Self.reference, prefersFuture: true) == Self.day(2026, 5, 18))
+    }
+
+    @Test func `upcoming weekday is unaffected by prefersFuture`() {
+        #expect(parser.parse("Friday", relativeTo: Self.reference, prefersFuture: true) == Self.day(2026, 5, 15))
+    }
+
+    @Test func `relative day keywords ignore prefersFuture`() {
+        // "today" / "tomorrow" / "yesterday" are anchored to the reference date.
+        #expect(parser.parse("today", relativeTo: Self.reference, prefersFuture: true) == Self.day(2026, 5, 13))
+        #expect(parser.parse("yesterday", relativeTo: Self.reference, prefersFuture: true) == Self.day(2026, 5, 12))
     }
 
     // MARK: - Misses

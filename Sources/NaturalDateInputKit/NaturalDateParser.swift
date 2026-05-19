@@ -15,21 +15,24 @@ public struct NaturalDateParser: Sendable {
 
     public func parse(
         _ string: String,
-        relativeTo reference: Date = .now
+        relativeTo reference: Date = .now,
+        prefersFuture: Bool = false
     ) -> Date? {
         let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !trimmed.isEmpty else { return nil }
 
+        // Relative day keywords (today, tomorrow, yesterday, …) are always
+        // absolute relative to the reference date and ignore `prefersFuture`.
         if let relative = parseRelativeDay(trimmed, relativeTo: reference) {
             return relative
         }
 
-        if let manual = parseOtherPatterns(trimmed, relativeTo: reference) {
+        if let manual = parseOtherPatterns(trimmed, relativeTo: reference, prefersFuture: prefersFuture) {
             return manual
         }
 
         if let detected = parseWithDataDetector(string) {
-            return ensureFuture(detected, relativeTo: reference)
+            return prefersFuture ? ensureFuture(detected, relativeTo: reference) : detected
         }
 
         return nil
@@ -64,26 +67,26 @@ public struct NaturalDateParser: Sendable {
 
     // MARK: - Other manual patterns
 
-    private func parseOtherPatterns(_ text: String, relativeTo reference: Date) -> Date? {
+    private func parseOtherPatterns(_ text: String, relativeTo reference: Date, prefersFuture: Bool) -> Date? {
         if let (weekday, time) = parseWeekdayWithTime(from: text),
-           let date = nextOccurrence(of: weekday, after: reference),
+           let date = occurrence(of: weekday, relativeTo: reference, prefersFuture: prefersFuture),
            let withTime = applyTime(time, to: date) {
             return withTime
         }
 
         if let weekday = parseWeekday(from: text),
-           let date = nextOccurrence(of: weekday, after: reference) {
+           let date = occurrence(of: weekday, relativeTo: reference, prefersFuture: prefersFuture) {
             return date
         }
 
         if let (month, day, time) = parseMonthDayTime(from: text),
-           let date = nextOccurrence(of: month, day: day, after: reference),
+           let date = occurrence(of: month, day: day, relativeTo: reference, prefersFuture: prefersFuture),
            let withTime = applyTime(time, to: date) {
             return withTime
         }
 
         if let (month, day) = parseMonthDay(from: text),
-           let date = nextOccurrence(of: month, day: day, after: reference) {
+           let date = occurrence(of: month, day: day, relativeTo: reference, prefersFuture: prefersFuture) {
             return date
         }
 
@@ -198,21 +201,21 @@ public struct NaturalDateParser: Sendable {
 
     // MARK: - Next occurrence
 
-    private func nextOccurrence(of weekday: Int, after reference: Date) -> Date? {
+    private func occurrence(of weekday: Int, relativeTo reference: Date, prefersFuture: Bool) -> Date? {
         let currentWeekday = calendar.component(.weekday, from: reference)
-        var daysToAdd = weekday - currentWeekday
-        if daysToAdd <= 0 { daysToAdd += 7 }
-        return calendar.date(byAdding: .day, value: daysToAdd, to: calendar.startOfDay(for: reference))
+        var daysDelta = weekday - currentWeekday
+        if prefersFuture && daysDelta <= 0 { daysDelta += 7 }
+        return calendar.date(byAdding: .day, value: daysDelta, to: calendar.startOfDay(for: reference))
     }
 
-    private func nextOccurrence(of month: Int, day: Int, after reference: Date) -> Date? {
+    private func occurrence(of month: Int, day: Int, relativeTo reference: Date, prefersFuture: Bool) -> Date? {
         var components = DateComponents()
         components.month = month
         components.day = day
         components.year = calendar.component(.year, from: reference)
 
         guard var date = calendar.date(from: components) else { return nil }
-        if date <= reference {
+        if prefersFuture && date <= reference {
             components.year = (components.year ?? 0) + 1
             date = calendar.date(from: components) ?? date
         }
