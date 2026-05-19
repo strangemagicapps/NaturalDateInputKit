@@ -1,0 +1,92 @@
+import Foundation
+import Testing
+@testable import NaturalDateInputKit
+
+@Suite("NaturalDateParser")
+struct NaturalDateParserTests {
+
+    static let calendar: Calendar = {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.locale = Locale(identifier: "en_US_POSIX")
+        calendar.timeZone = TimeZone(identifier: "UTC")!
+        return calendar
+    }()
+
+    static let locale = Locale(identifier: "en_US_POSIX")
+
+    /// 2026-05-13 12:00 UTC — a Wednesday.
+    static let reference: Date = day(2026, 5, 13, hour: 12)
+
+    static func day(_ year: Int, _ month: Int, _ day: Int, hour: Int = 0, minute: Int = 0) -> Date {
+        DateComponents(
+            calendar: calendar,
+            year: year, month: month, day: day,
+            hour: hour, minute: minute
+        ).date!
+    }
+
+    private var parser: NaturalDateParser {
+        NaturalDateParser(calendar: Self.calendar, locale: Self.locale)
+    }
+
+    // MARK: - Relative day keywords
+
+    @Test func parsesToday() {
+        #expect(parser.parse("today", relativeTo: Self.reference) == Self.day(2026, 5, 13))
+    }
+
+    @Test func parsesTomorrow() {
+        #expect(parser.parse("tomorrow", relativeTo: Self.reference) == Self.day(2026, 5, 14))
+    }
+
+    @Test func parsesYesterday() {
+        #expect(parser.parse("yesterday", relativeTo: Self.reference) == Self.day(2026, 5, 12))
+    }
+
+    @Test(arguments: ["TODAY", "Today", "  today  ", "ToDay"])
+    func relativeDayIsCaseAndWhitespaceInsensitive(_ input: String) {
+        #expect(parser.parse(input, relativeTo: Self.reference) == Self.day(2026, 5, 13))
+    }
+
+    // MARK: - Weekday names
+
+    @Test func sameWeekdayReturnsNextWeek() {
+        // Wednesday parsed on Wednesday → upcoming Wednesday (7 days later)
+        #expect(parser.parse("Wednesday", relativeTo: Self.reference) == Self.day(2026, 5, 20))
+    }
+
+    @Test func upcomingWeekdayReturnsNextOccurrence() {
+        // Friday after Wed 5/13 → 5/15
+        #expect(parser.parse("Friday", relativeTo: Self.reference) == Self.day(2026, 5, 15))
+    }
+
+    @Test func weekdayBeforeTodayWrapsForward() {
+        // Monday after Wed 5/13 → 5/18
+        #expect(parser.parse("Monday", relativeTo: Self.reference) == Self.day(2026, 5, 18))
+    }
+
+    @Test func nextPrefixedWeekday() {
+        #expect(parser.parse("next Friday", relativeTo: Self.reference) == Self.day(2026, 5, 15))
+    }
+
+    @Test(arguments: ["FRIDAY", "Friday", "friday", "FrIdAy"])
+    func weekdayIsCaseInsensitive(_ input: String) {
+        #expect(parser.parse(input, relativeTo: Self.reference) == Self.day(2026, 5, 15))
+    }
+
+    @Test func shortWeekdayName() {
+        // "Fri" should resolve via short weekday symbols
+        #expect(parser.parse("Fri", relativeTo: Self.reference) == Self.day(2026, 5, 15))
+    }
+
+    // MARK: - Misses
+
+    @Test func unparseableInputReturnsNil() {
+        #expect(parser.parse("banana", relativeTo: Self.reference) == nil)
+    }
+
+    @Test func emptyStringReturnsNil() {
+        #expect(parser.parse("", relativeTo: Self.reference) == nil)
+        #expect(parser.parse("   ", relativeTo: Self.reference) == nil)
+    }
+}
