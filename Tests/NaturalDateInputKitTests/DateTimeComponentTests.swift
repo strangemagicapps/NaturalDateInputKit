@@ -14,19 +14,19 @@ struct DateTimeComponentTests {
         return calendar.date(bySettingHour: hour, minute: minute, second: 0, of: midnight)!
     }
 
-    @Test func midnightHasNoTimeComponent() {
+    @Test func `midnight has no time component`() {
         #expect(Self.date(hour: 0, minute: 0).hasTimeComponent == false)
     }
 
-    @Test func nonZeroHourHasTimeComponent() {
+    @Test func `non-zero hour has time component`() {
         #expect(Self.date(hour: 9, minute: 0).hasTimeComponent == true)
     }
 
-    @Test func nonZeroMinuteHasTimeComponent() {
+    @Test func `non-zero minute has time component`() {
         #expect(Self.date(hour: 0, minute: 30).hasTimeComponent == true)
     }
 
-    @Test func hourAndMinuteHasTimeComponent() {
+    @Test func `hour and minute has time component`() {
         #expect(Self.date(hour: 14, minute: 45).hasTimeComponent == true)
     }
 }

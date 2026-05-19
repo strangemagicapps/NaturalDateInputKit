@@ -4,11 +4,11 @@ import Testing
 @Suite("String.regexEscaped")
 struct StringRegexEscapedTests {
 
-    @Test func emptyStringStaysEmpty() {
+    @Test func `empty string stays empty`() {
         #expect("".regexEscaped == "")
     }
 
-    @Test func plainTextIsUnchanged() {
+    @Test func `plain text is unchanged`() {
         #expect("Monday".regexEscaped == "Monday")
         #expect("Hello world 123".regexEscaped == "Hello world 123")
     }
@@ -25,21 +25,21 @@ struct StringRegexEscapedTests {
         ("a[b]c", #"a\[b\]c"#),
         ("a{b}c", #"a\{b\}c"#),
     ])
-    func escapesIndividualMetacharacters(input: String, expected: String) {
+    func `escapes individual metacharacters`(input: String, expected: String) {
         #expect(input.regexEscaped == expected)
     }
 
-    @Test func escapesBackslash() {
+    @Test func `escapes backslash`() {
         #expect(#"a\b"#.regexEscaped == #"a\\b"#)
     }
 
-    @Test func escapesAllMetacharactersTogether() {
+    @Test func `escapes all metacharacters together`() {
         let input = #"\.[]{}()*+?|^$"#
         let expected = #"\\\.\[\]\{\}\(\)\*\+\?\|\^\$"#
         #expect(input.regexEscaped == expected)
     }
 
-    @Test func resultIsValidInARegex() throws {
+    @Test func `escaped result is valid as a regex literal`() throws {
         // Round-trip: an escaped literal should match the original literal exactly.
         let literal = "Mon. (next)"
         let pattern = literal.regexEscaped
