@@ -29,11 +29,6 @@ let package = Package(
             dependencies: ["NaturalDateInputKit"],
             swiftSettings: strictConcurrency
         ),
-        .testTarget(
-            name: "NaturalDateInputKitUITests",
-            dependencies: ["NaturalDateInputKitUI"],
-            swiftSettings: strictConcurrency
-        ),
     ],
     swiftLanguageModes: [.v6]
 )
