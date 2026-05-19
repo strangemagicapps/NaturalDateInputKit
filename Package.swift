@@ -1,26 +1,38 @@
 // swift-tools-version: 6.3
-// The swift-tools-version declares the minimum version of Swift required to build this package.
 
 import PackageDescription
 
+let strictConcurrency: [SwiftSetting] = [
+    .swiftLanguageMode(.v6),
+    .enableUpcomingFeature("StrictConcurrency"),
+]
+
 let package = Package(
     name: "NaturalDateInputKit",
+    platforms: [.iOS(.v26), .macOS(.v26)],
     products: [
-        // Products define the executables and libraries a package produces, making them visible to other packages.
-        .library(
-            name: "NaturalDateInputKit",
-            targets: ["NaturalDateInputKit"]
-        ),
+        .library(name: "NaturalDateInputKit", targets: ["NaturalDateInputKit"]),
+        .library(name: "NaturalDateInputKitUI", targets: ["NaturalDateInputKitUI"]),
     ],
     targets: [
-        // Targets are the basic building blocks of a package, defining a module or a test suite.
-        // Targets can depend on other targets in this package and products from dependencies.
         .target(
-            name: "NaturalDateInputKit"
+            name: "NaturalDateInputKit",
+            swiftSettings: strictConcurrency
+        ),
+        .target(
+            name: "NaturalDateInputKitUI",
+            dependencies: ["NaturalDateInputKit"],
+            swiftSettings: strictConcurrency
         ),
         .testTarget(
             name: "NaturalDateInputKitTests",
-            dependencies: ["NaturalDateInputKit"]
+            dependencies: ["NaturalDateInputKit"],
+            swiftSettings: strictConcurrency
+        ),
+        .testTarget(
+            name: "NaturalDateInputKitUITests",
+            dependencies: ["NaturalDateInputKitUI"],
+            swiftSettings: strictConcurrency
         ),
     ],
     swiftLanguageModes: [.v6]
