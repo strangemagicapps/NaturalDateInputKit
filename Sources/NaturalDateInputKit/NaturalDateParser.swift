@@ -1,10 +1,29 @@
 import Foundation
 import RegexBuilder
 
+/// Parses natural-language date and time expressions ("tomorrow", "next Friday at 9am",
+/// "7 April", "15:30") into a ``Foundation/DateComponents`` value the caller can resolve
+/// to a ``Foundation/Date``.
+///
+/// The parser is intentionally lossy about what it didn't see: ``parse(_:relativeTo:prefersFuture:)``
+/// returns components containing `year`, `month`, and `day`, with `hour` and `minute`
+/// populated **only** when the input explicitly mentions a time. This lets callers apply
+/// their own default time (e.g. 09:00 for a calendar app) without guessing whether the
+/// user provided one.
 public struct NaturalDateParser: Sendable {
+    /// The calendar used for all date arithmetic (week boundaries, month/year wrapping,
+    /// component extraction). Defaults to ``Foundation/Calendar/current``.
     public var calendar: Calendar
+
+    /// The locale used to recognise localised weekday and month names. Defaults to
+    /// ``Foundation/Locale/current``.
     public var locale: Locale
 
+    /// Creates a parser bound to the given calendar and locale.
+    ///
+    /// - Parameters:
+    ///   - calendar: Calendar used for all date arithmetic. Defaults to `.current`.
+    ///   - locale: Locale used to recognise localised weekday and month names. Defaults to `.current`.
     public init(
         calendar: Calendar = .current,
         locale: Locale = .current
@@ -13,29 +32,77 @@ public struct NaturalDateParser: Sendable {
         self.locale = locale
     }
 
+    /// Parses a natural-language date or time expression.
+    ///
+    /// The returned ``Foundation/DateComponents`` always carries `year`, `month`, and `day`.
+    /// `hour` and `minute` are populated only when the input explicitly mentions a time
+    /// (e.g. `"3pm"`, `"today at 9:30"`, `"Friday 15:00"`); otherwise they remain `nil` so
+    /// callers can decide how to default them.
+    ///
+    /// Recognised forms include:
+    /// - Relative-day keywords: `"today"`, `"tomorrow"`, `"yesterday"` (plus localised
+    ///   variants for German, French, Spanish, Italian, Japanese), optionally followed by
+    ///   a time, with an optional `at` connector.
+    /// - Weekday names (`"Friday"`, `"next Friday"`, `"Fri"`), optionally with a time.
+    /// - Month / day combinations (`"7 April"`, `"April 7"`), optionally with a time.
+    /// - Bare times (`"3pm"`, `"15:30"`), resolved against the reference date.
+    /// - A fallback pass through `NSDataDetector` for anything else date-like.
+    ///
+    /// - Parameters:
+    ///   - string: The user-supplied text to parse.
+    ///   - reference: The "now" anchor used to resolve relative inputs. Defaults to ``Foundation/Date/now``.
+    ///   - prefersFuture: When `true`, weekday and month/day matches that would resolve to
+    ///     a past date are rolled forward (next week, next year). Relative-day keywords
+    ///     (`today` / `tomorrow` / `yesterday`) are unaffected. Defaults to `false`.
+    /// - Returns: Parsed components, or `nil` if no date could be extracted.
     public func parse(
         _ string: String,
         relativeTo reference: Date = .now,
         prefersFuture: Bool = false
-    ) -> Date? {
+    ) -> DateComponents? {
         let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !trimmed.isEmpty else { return nil }
 
-        // Relative day keywords (today, tomorrow, yesterday, …) are always
-        // absolute relative to the reference date and ignore `prefersFuture`.
+        if let withTime = parseRelativeDayWithTime(trimmed, relativeTo: reference) {
+            return components(from: withTime, includingTime: true)
+        }
+
         if let relative = parseRelativeDay(trimmed, relativeTo: reference) {
-            return relative
+            return components(from: relative, includingTime: false)
         }
 
         if let manual = parseOtherPatterns(trimmed, relativeTo: reference, prefersFuture: prefersFuture) {
-            return manual
+            return components(from: manual.date, includingTime: manual.hasTime)
+        }
+
+        if let timeOnly = parseTimeOnly(trimmed, relativeTo: reference) {
+            return components(from: timeOnly, includingTime: true)
         }
 
         if let detected = parseWithDataDetector(string) {
-            return prefersFuture ? ensureFuture(detected, relativeTo: reference) : detected
+            let final = prefersFuture ? ensureFuture(detected, relativeTo: reference) : detected
+            return components(from: final, includingTime: hasNonMidnightTime(final))
         }
 
         return nil
+    }
+
+    /// Extracts the public-facing components from a resolved `Date`. Time fields are
+    /// included only when the matching branch reported that a time was detected, so the
+    /// caller can distinguish "no time given" from "explicitly midnight".
+    private func components(from date: Date, includingTime: Bool) -> DateComponents {
+        let fields: Set<Calendar.Component> = includingTime
+            ? [.year, .month, .day, .hour, .minute]
+            : [.year, .month, .day]
+        return calendar.dateComponents(fields, from: date)
+    }
+
+    /// Heuristic used for `NSDataDetector` results, which don't tell us whether the user
+    /// typed a time. Treats any hour or minute other than 0 as "time was specified".
+    /// This means an actual midnight input is misclassified as no-time — accepted tradeoff.
+    private func hasNonMidnightTime(_ date: Date) -> Bool {
+        let c = calendar.dateComponents([.hour, .minute], from: date)
+        return (c.hour ?? 0) != 0 || (c.minute ?? 0) != 0
     }
 
     // MARK: - Localised names
@@ -46,48 +113,80 @@ public struct NaturalDateParser: Sendable {
 
     // MARK: - Relative day keywords
 
+    private static let relativeDayKeywords: [(keyword: String, offset: Int)] = [
+        ("today", 0), ("now", 0), ("heute", 0), ("aujourd'hui", 0), ("hoy", 0), ("oggi", 0), ("今日", 0),
+        ("tomorrow", 1), ("morgen", 1), ("demain", 1), ("mañana", 1), ("domani", 1), ("明日", 1),
+        ("yesterday", -1), ("gestern", -1), ("hier", -1), ("ayer", -1), ("ieri", -1), ("昨日", -1),
+    ]
+
+    /// Matches a standalone relative-day keyword and returns the start-of-day for the
+    /// resolved date. Returns `nil` if the input contains anything beyond the keyword.
     private func parseRelativeDay(_ text: String, relativeTo reference: Date) -> Date? {
-        let today = ["today", "now", "heute", "aujourd'hui", "hoy", "oggi", "今日"]
-        let tomorrow = ["tomorrow", "morgen", "demain", "mañana", "domani", "明日"]
-        let yesterday = ["yesterday", "gestern", "hier", "ayer", "ieri", "昨日"]
-
-        let startOfReferenceDay = calendar.startOfDay(for: reference)
-
-        if today.contains(text) {
-            return startOfReferenceDay
+        guard let offset = Self.relativeDayKeywords.first(where: { $0.keyword == text })?.offset else {
+            return nil
         }
-        if tomorrow.contains(text) {
-            return calendar.date(byAdding: .day, value: 1, to: startOfReferenceDay)
-        }
-        if yesterday.contains(text) {
-            return calendar.date(byAdding: .day, value: -1, to: startOfReferenceDay)
+        return calendar.date(byAdding: .day, value: offset, to: calendar.startOfDay(for: reference))
+    }
+
+    /// Matches a relative-day keyword followed by a time expression, with an optional
+    /// `at` connector (e.g. `"today 3pm"`, `"tomorrow at 09:00"`, `"yesterday 17:00"`).
+    /// Returns `nil` if the time portion cannot be parsed.
+    private func parseRelativeDayWithTime(_ text: String, relativeTo reference: Date) -> Date? {
+        for (keyword, offset) in Self.relativeDayKeywords {
+            let pattern = "(?i)^\(keyword.regexEscaped)\\s+(?:at\\s+)?(.+)$"
+            guard let regex = try? Regex(pattern),
+                  let match = text.firstMatch(of: regex),
+                  let timeSubstring = match.output[1].substring
+            else { continue }
+            guard let day = calendar.date(byAdding: .day, value: offset, to: calendar.startOfDay(for: reference)),
+                  let withTime = applyTime(String(timeSubstring), to: day)
+            else { continue }
+            return withTime
         }
         return nil
     }
 
+    // MARK: - Bare time
+
+    /// Matches a standalone time expression (e.g. `"3pm"`, `"15:30"`) and returns the
+    /// reference day at that time.
+    ///
+    /// Gated on the presence of a colon or am/pm suffix to avoid swallowing bare integers
+    /// like `"3"` — without a marker the input is too ambiguous to interpret as a time.
+    private func parseTimeOnly(_ text: String, relativeTo reference: Date) -> Date? {
+        let hasColon = text.contains(":")
+        let hasPeriod = ["am", "pm", "a.m.", "p.m."].contains(where: text.hasSuffix)
+        guard hasColon || hasPeriod else { return nil }
+        return applyTime(text, to: calendar.startOfDay(for: reference))
+    }
+
     // MARK: - Other manual patterns
 
-    private func parseOtherPatterns(_ text: String, relativeTo reference: Date, prefersFuture: Bool) -> Date? {
+    private func parseOtherPatterns(
+        _ text: String,
+        relativeTo reference: Date,
+        prefersFuture: Bool
+    ) -> (date: Date, hasTime: Bool)? {
         if let (weekday, time) = parseWeekdayWithTime(from: text),
            let date = occurrence(of: weekday, relativeTo: reference, prefersFuture: prefersFuture),
            let withTime = applyTime(time, to: date) {
-            return withTime
+            return (withTime, true)
         }
 
         if let weekday = parseWeekday(from: text),
            let date = occurrence(of: weekday, relativeTo: reference, prefersFuture: prefersFuture) {
-            return date
+            return (date, false)
         }
 
         if let (month, day, time) = parseMonthDayTime(from: text),
            let date = occurrence(of: month, day: day, relativeTo: reference, prefersFuture: prefersFuture),
            let withTime = applyTime(time, to: date) {
-            return withTime
+            return (withTime, true)
         }
 
         if let (month, day) = parseMonthDay(from: text),
            let date = occurrence(of: month, day: day, relativeTo: reference, prefersFuture: prefersFuture) {
-            return date
+            return (date, false)
         }
 
         return nil
@@ -105,6 +204,13 @@ public struct NaturalDateParser: Sendable {
 
     // MARK: - Future adjustment
 
+    /// Rolls `date` forward until it lies in the future relative to `reference`. Used
+    /// only for `NSDataDetector` results when `prefersFuture` is `true`; the manual
+    /// pattern paths already produce a future-shifted result via ``occurrence(of:relativeTo:prefersFuture:)``.
+    ///
+    /// Tries adding a week first (covers weekday-style inputs), then a year (covers
+    /// month/day inputs without an explicit year). Falls back to the original date if
+    /// neither produces a future value.
     private func ensureFuture(_ date: Date, relativeTo reference: Date) -> Date {
         if date > reference { return date }
         if let nextWeek = calendar.date(byAdding: .weekOfYear, value: 1, to: date),
@@ -201,6 +307,12 @@ public struct NaturalDateParser: Sendable {
 
     // MARK: - Next occurrence
 
+    /// Resolves a weekday number (1 = Sunday … 7 = Saturday) to a concrete date relative
+    /// to `reference`.
+    ///
+    /// With `prefersFuture == false` (the default), the result lies in the current week —
+    /// so "Monday" parsed on a Wednesday yields the past Monday. With `prefersFuture == true`,
+    /// same-day and earlier-in-week matches are rolled forward by 7 days.
     private func occurrence(of weekday: Int, relativeTo reference: Date, prefersFuture: Bool) -> Date? {
         let currentWeekday = calendar.component(.weekday, from: reference)
         var daysDelta = weekday - currentWeekday
@@ -208,6 +320,9 @@ public struct NaturalDateParser: Sendable {
         return calendar.date(byAdding: .day, value: daysDelta, to: calendar.startOfDay(for: reference))
     }
 
+    /// Resolves a month/day pair to a concrete date in the reference year. With
+    /// `prefersFuture == true`, a date that has already passed in the current year is
+    /// rolled forward to the next year.
     private func occurrence(of month: Int, day: Int, relativeTo reference: Date, prefersFuture: Bool) -> Date? {
         var components = DateComponents()
         components.month = month
@@ -224,7 +339,18 @@ public struct NaturalDateParser: Sendable {
 
     // MARK: - Time application
 
+    /// Parses a time fragment (`"3pm"`, `"15:30"`, `"9:15 am"`, `"at 3pm"`) and returns
+    /// the given date with its hour/minute set accordingly.
+    ///
+    /// A leading `at ` connector is stripped so callers don't need to pre-process. When
+    /// the input is a bare 1–12 hour with no am/pm marker (e.g. `"3"`), PM is assumed —
+    /// a deliberate bias toward typical "event time" inputs.
     private func applyTime(_ timeString: String, to date: Date) -> Date? {
+        var cleaned = timeString.trimmingCharacters(in: .whitespaces)
+        if let atRange = cleaned.range(of: #"^at\s+"#, options: [.regularExpression, .caseInsensitive]) {
+            cleaned.removeSubrange(atRange)
+        }
+
         let timeRegex = Regex {
             Anchor.startOfSubject
             Capture { Repeat(1...2) { .digit } }
@@ -242,7 +368,7 @@ public struct NaturalDateParser: Sendable {
         }
         .ignoresCase()
 
-        guard let match = timeString.wholeMatch(of: timeRegex),
+        guard let match = cleaned.wholeMatch(of: timeRegex),
               var hour = Int(match.output.1)
         else { return nil }
 

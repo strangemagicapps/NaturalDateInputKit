@@ -15,14 +15,29 @@ struct NaturalDateParserTests {
     static let locale = Locale(identifier: "en_US_POSIX")
 
     /// 2026-05-13 12:00 UTC — a Wednesday.
-    static let reference: Date = day(2026, 5, 13, hour: 12)
+    static let reference: Date = date(2026, 5, 13, hour: 12)
 
-    static func day(_ year: Int, _ month: Int, _ day: Int, hour: Int = 0, minute: Int = 0) -> Date {
+    static func date(_ year: Int, _ month: Int, _ day: Int, hour: Int = 0, minute: Int = 0) -> Date {
         DateComponents(
             calendar: calendar,
             year: year, month: month, day: day,
             hour: hour, minute: minute
         ).date!
+    }
+
+    /// Build a `DateComponents` with year/month/day always set and
+    /// hour/minute only when explicitly provided — matching what the parser
+    /// returns when a time is or isn't detected.
+    static func day(_ year: Int, _ month: Int, _ day: Int, hour: Int? = nil, minute: Int? = nil) -> DateComponents {
+        var c = DateComponents()
+        c.year = year
+        c.month = month
+        c.day = day
+        if hour != nil || minute != nil {
+            c.hour = hour ?? 0
+            c.minute = minute ?? 0
+        }
+        return c
     }
 
     private var parser: NaturalDateParser {
